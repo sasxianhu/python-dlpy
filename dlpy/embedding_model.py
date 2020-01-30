@@ -16,7 +16,7 @@
 #  limitations under the License.
 #
 
-''' The Embedding Model class adds training, evaluation,feature analysis routines for learning embedding '''
+''' The Embedding Model class adds training, evaluation, feature analysis routines for learning embedding '''
 
 from copy import deepcopy
 
