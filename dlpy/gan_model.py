@@ -26,7 +26,8 @@ from .attribute_utils import create_extended_attributes
 from .image_embedding import ImageEmbeddingTable
 from .model import DataSpec
 from .network import WeightsTable
-from dlpy.utils import DLPyError
+from dlpy.utils import DLPyError, random_name
+import time
 
 
 class GANModel:
@@ -38,9 +39,8 @@ class GANModel:
     data_specs = None
     models = {}
 
-    @classmethod
-    def build_gan_model(cls, generator, discriminator,
-                        output_width=None, output_height=None, output_depth=None):
+    def __init__(self, generator, discriminator,
+                 output_width=None, output_height=None, output_depth=None):
         '''
 
         Build an Generative Adversarial Network model based on a given generator and discriminator model branches
@@ -63,7 +63,7 @@ class GANModel:
 
         Returns
         -------
-        :a dict that contains a list of models. Keys are discriminator and generator
+        :class: `GANModel`
 
         '''
 
@@ -86,8 +86,17 @@ class GANModel:
         else:
             discriminator_tensor = deepcopy(discriminator)
 
+        # add layer name prefix
+        for layer in discriminator_tensor.layers:
+            layer.name = 'discriminator_' + layer.name
+
+        for layer in generator_tensor.layers:
+            layer.name = 'generator_' + layer.name
+
         generator_tensor.number_of_instances = 0
         discriminator_tensor.number_of_instances = 0
+
+        discriminator_tensor_for_generator = deepcopy(discriminator_tensor)
 
         # check the output layer for generator
         if len(generator_tensor.output_layers) != 1:
@@ -124,52 +133,87 @@ class GANModel:
             output_depth = discriminator_tensor.layers[0].output_size[2]
 
         # check whether the last tensor size from generator matches the above output size
-        if output_width * output_height * output_depth != \
-                (generator_tensor.layers[-1].output_size[0] * generator_tensor.layers[-1].output_size[1] *
-                 generator_tensor.layers[-1].output_size[2]):
-            raise DLPyError('The output size ({}, {}, {}) from the last layer of the generator model does not match '
+        if isinstance(generator_tensor.layers[-1].tensor.shape, tuple):
+            output_size = generator_tensor.layers[-1].tensor.shape[0] * generator_tensor.layers[-1].tensor.shape[1] * \
+                          generator_tensor.layers[-1].tensor.shape[2]
+        else:
+            output_size = generator_tensor.layers[-1].tensor.shape
+        if output_width * output_height * output_depth != output_size:
+            raise DLPyError('The output size ({}) from the last layer of the generator model does not match '
                             'the required width ({}), height ({}), and depth({}).'.
-                            format(generator_tensor.layers[-1].output_size[0],
-                                   generator_tensor.layers[-1].output_size[1],
-                                   generator_tensor.layers[-1].output_size[2],
+                            format(output_size,
                                    output_width, output_height, output_depth))
 
         # construct the discriminator model
-        temp_input_layer = Input(**discriminator_tensor.layers[0].config, name=cls.input_layer_name_discriminator)
+        temp_input_layer = Input(**discriminator_tensor.layers[0].config, name=self.input_layer_name_discriminator)
         temp_branch_d = discriminator_tensor(temp_input_layer)  # return a list of tensors
         # add the regression output layer that output a number between 0 and 1
-        temp_output = OutputLayer(n=1, act='sigmoid', error='normal', name=cls.output_layer_name)(temp_branch_d)
+        temp_output = OutputLayer(n=1, act='sigmoid', error='normal', name=self.output_layer_name)(temp_branch_d)
         discriminator_model = Model(discriminator.conn, temp_input_layer, temp_output)
         discriminator_model.compile()
 
-        cls.models['discriminator'] = discriminator_model
+        self.models['discriminator'] = discriminator_model
 
         # construct the generator model
-        temp_input_layer = Input(**generator_tensor.layers[0].config, name=cls.input_layer_name_generator)
+        discriminator_tensor_for_generator.number_of_instances = 0
+        temp_input_layer = Input(**generator_tensor.layers[0].config, name=self.input_layer_name_generator)
         temp_branch = generator_tensor(temp_input_layer)  # return a list of tensors
         # add reshape layer for image generation
-        temp_branch = Reshape(name=cls.generated_tensor_layer_name,
+        temp_branch = Reshape(name=self.generated_tensor_layer_name,
                               width=output_width, height=output_height, depth=output_depth)(temp_branch)
-        temp_branch = discriminator_tensor(temp_branch)
+        temp_branch = discriminator_tensor_for_generator(temp_branch)
         # add the regression output layer that output a number between 0 and 1
         temp_output = OutputLayer(n=1, act='sigmoid', error='normal')(temp_branch)
         generator_model = Model(generator.conn, temp_input_layer, temp_output)
         generator_model.compile()
 
-        cls.models['generator'] = generator_model
+        self.models['generator'] = generator_model
 
-        # let the generator model use the weights from discriminator and fix them
+        # build the freeze layer list for the generator model
+        self.__freeze_layer_list = None
+        for layer in generator_model.layers:
+            if layer.name.find('discriminator_') == 0:
+                if self.__freeze_layer_list is None:
+                    self.__freeze_layer_list = [layer.name]
+                else:
+                    self.__freeze_layer_list.append(layer.name)
 
-        return cls()
+        # init some attrs
+        self.current_data_iter = -1
+        self.generator_data_cas_table = None
+        self.discriminator_data_cas_table = None
+        self.output_width = output_width
+        self.output_height = output_height
+        self.output_depth = output_depth
+        self.output_size = output_width*output_height*output_depth
 
-    @classmethod
-    def fit_gan_model(self, optimizer,
-                      data=None, path=None, n_samples=512,
-                      resize_width=None, resize_height=None,
-                      max_iter=1,
-                      gpu=None, seed=0, record_seed=0,
-                      save_best_weights=False, n_threads=None,
-                      train_from_scratch=None):
+        # data_specs
+        gen_vars = []
+        for i in range(0, output_size):
+            gen_vars.append('x_'+str(i))
+
+        self.generator_data_specs = [
+            DataSpec(type_='NUMNOM', layer=self.input_layer_name_generator, data=gen_vars),
+            DataSpec(type_='NUMNOM', layer='output_layer_name', data=['_target_'])]
+
+        self.discriminator_data_specs = [
+            DataSpec(type_='IMAGE', layer=self.input_layer_name_discriminator, data=['_image_']),
+            DataSpec(type_='NUMNOM', layer='output_layer_name', data=['_target_'])]
+
+    def __del__(self):
+        if self.generator_data_cas_table is not None:
+            self.generator_data_cas_table.droptable()
+        if self.discriminator_data_cas_table is not None:
+            self.discriminator_data_cas_table.droptable()
+
+    def fit(self, optimizer_generator, path_generator,
+            optimizer_discriminator, path_discriminator,
+            n_samples=512,
+            resize_width=None, resize_height=None,
+            max_iter=1,
+            gpu=None, seed=0, record_seed=0,
+            save_best_weights=False, n_threads=None,
+            train_from_scratch=None):
 
         """
         Fitting a deep learning model for GAN.
@@ -177,14 +221,19 @@ class GANModel:
         Parameters
         ----------
 
-        optimizer : :class:`Optimizer`
-            Specifies the parameters for the optimizer.
-        data : class:`ImageEmbeddingTable`, optional
-            This is the input data. It muse be a ImageEmbeddingTable object. Either data or path has to be specified.
-        path : string, optional
-            The path to the image directory on the server.
+        optimizer_generator : :class:`Optimizer`
+            Specifies the parameters for the optimizer for the generator model.
+        path_generator : string
+            The path to the image directory on the server that contains the real images for generator.
+            When the string is empty, the data for generator will be generated automatically.
             Path may be absolute, or relative to the current caslib root.
-            when path is specified, the data option will be ignored.
+            A new sample of data will be randomly generated after the number of epochs defined in Optimizer.
+            max_iter defines how many iterations the random sample will be generated.
+        optimizer_discriminator : :class:`Optimizer`
+            Specifies the parameters for the optimizer for the discriminator model.
+        path_discriminator : string
+            The path to the image directory on the server that contains the real images for discriminator.
+            Path may be absolute, or relative to the current caslib root.
             A new sample of data will be randomly generated after the number of epochs defined in Optimizer.
             max_iter defines how many iterations the random sample will be generated.
         n_samples : int, optional
@@ -223,29 +272,53 @@ class GANModel:
             Specifies the number of threads to use. If nothing is set then
             all of the cores available in the machine(s) will be used.
         train_from_scratch : bool, optional
-            When set to True, it ignores the existing weights and trains the model from the scracth.
+            When set to True, it ignores the existing weights and trains the model from the scratch.
 
         Returns
         --------
-        :class:`CASResults` or a list of `CASResults` when the path option is specified
+        :a dict of `CASResults` that contains the optimization history for both generator and discriminator
 
         """
 
+        self.conn.loadactionset('datastep', _messagelevel='error')
+
         # check options
-        if data is None and path is None:
-            raise DLPyError('Either the data option or path must be specified to generate the input data')
 
-        if data is not None and path is not None:
-            print('Note: the data option will be ignored and the path option will be used to generate the input '
-                  'data')
+        # TODO: Init stage? we might need warm up the weights
 
-        # check the data type
-        if path is None:
-            if not isinstance(data, ImageTable):
-                raise DLPyError('The data option must contain a valid image table')
+        res = {'generator': [], 'discriminator': []}
+        time_start = time.time()
 
-    @classmethod
-    def deploy_gan_model(self, path, output_format='astore'):
+        for data_iter in range(0, max_iter):
+            self.current_data_iter = data_iter
+
+            # optimize generator first. If discriminator has weights, use them. And freeze all discriminator weights
+            res_t = self.optimize_generator(self, optimizer=optimizer_generator,
+                                            path=path_generator,
+                                            n_samples=n_samples,
+                                            gpu=gpu, seed=seed, record_seed=record_seed,
+                                            save_best_weights=save_best_weights, n_threads=n_threads,
+                                            train_from_scratch=train_from_scratch)
+            res['generator'].append(res_t)
+
+            # optimize discriminator. load the data from path, append the data from generator.
+            res_t = self.optimize_discriminator(self, optimizer=optimizer_discriminator,
+                                                path=path_discriminator,
+                                                n_samples=n_samples,
+                                                resize_width=resize_width, resize_height=resize_height,
+                                                gpu=gpu, seed=seed, record_seed=record_seed,
+                                                save_best_weights=save_best_weights, n_threads=n_threads,
+                                                train_from_scratch=train_from_scratch)
+            res['discriminator'].append(res_t)
+
+        print('Note: Training with data generation took {} (s)'.format(time.time() - time_start))
+
+        return res
+
+    def predict(self):
+        pass
+
+    def deploy(self, path, output_format='astore'):
         """
         Deploy the deep learning model to a data file
 
@@ -283,4 +356,78 @@ class GANModel:
 
         """
 
-        pass
+    @staticmethod
+    def generate_random_images(conn, n_obs, seed, width, height, depth):
+        name = random_name()
+        code_str = 'data ' + name + '; call streaminit(' + str(seed) + '); '
+        code_str += 'do i=1 to ' + str(n_obs) + ';'
+        for i in range(0, width * height * depth):
+            code_str += 'x_' + str(i) + '=rand("UNIFORM")*2-1;'
+        code_str += '_target_=1; output; end; drop i; run;'
+        conn.retrieve('datastep.runcode', _messagelevel='error', single='Yes', code=code_str)
+        return conn.CASTable(name)
+
+    @staticmethod
+    def optimize_generator(self, optimizer, path, n_samples, gpu, seed, record_seed, save_best_weights, n_threads,
+                           train_from_scratch):
+
+        model = self.models['generator']
+
+        # generate random data
+        if self.generator_data_cas_table is not None:
+            self.generator_data_cas_table.droptable()
+
+        self.generator_data_cas_table = self.generate_random_images(self.conn, n_samples, seed + self.current_data_iter,
+                                                                    self.output_width, self.output_height,
+                                                                    self.output_depth)
+        # if discriminator has the weights, load them
+
+        # fit but freeze discriminator weights
+        if self.current_data_iter == 0:
+            train_from_scratch_real = train_from_scratch
+        else:
+            train_from_scratch_real = False
+
+        res = model.fit(self.generator_data_cas_table, inputs=None, target=None,
+                        data_specs=self.generator_data_specs,
+                        optimizer=optimizer,
+                        valid_table=None, valid_freq=None, gpu=gpu,
+                        seed=seed, record_seed=record_seed,
+                        force_equal_padding=True,
+                        save_best_weights=save_best_weights, n_threads=n_threads,
+                        target_order=None, train_from_scratch=train_from_scratch_real)
+
+        return res
+
+    @staticmethod
+    def optimize_discriminator(self, optimizer, path, n_samples, resize_width, resize_height,
+                               gpu, seed, record_seed, save_best_weights, n_threads,
+                               train_from_scratch):
+
+        model = self.models['discriminator']
+
+        if self.discriminator_data_cas_table is not None:
+            self.discriminator_data_cas_table.droptable()
+
+        # load real images from path
+
+        # load fake images for cas table
+
+        # append the table to generate the final training data
+
+        # fit. if discriminator has the weights, load them
+        if self.current_data_iter == 0:
+            train_from_scratch_real = train_from_scratch
+        else:
+            train_from_scratch_real = False
+
+        res = model.fit(self.discriminator_data_cas_table, inputs=None, target=None,
+                        data_specs=self.discriminator_data_specs,
+                        optimizer=optimizer,
+                        valid_table=None, valid_freq=None, gpu=gpu,
+                        seed=seed, record_seed=record_seed,
+                        force_equal_padding=True,
+                        save_best_weights=save_best_weights, n_threads=n_threads,
+                        target_order=None, train_from_scratch=train_from_scratch_real)
+
+        return res

@@ -27,9 +27,9 @@ import unittest
 import swat
 import swat.utils.testing as tm
 
-from dlpy.applications import ResNet18_Caffe, DLPyError, Model
+from dlpy.applications import ResNet18_Caffe, DLPyError, Model, Sequential
 from dlpy.gan_model import GANModel
-from dlpy.layers import Conv2D, Input, OutputLayer
+from dlpy.layers import Conv2D, Input, OutputLayer, InputLayer, Conv2d, Pooling, Dense
 
 
 class TestGANModel(unittest.TestCase):
@@ -93,14 +93,45 @@ class TestGANModel(unittest.TestCase):
         branch = resnet18_model.to_functional_model(stop_layers=resnet18_model.layers[-1])
 
         # raise error
-        self.assertRaises(DLPyError, lambda: GANModel.build_gan_model(branch, branch))
+        self.assertRaises(DLPyError, lambda: GANModel(branch, branch))
 
         # change the output size for generator
         inp = Input(**branch.layers[0].config)
         generator = Conv2D(width=1, height=1, n_filters=224*224*3)(branch(inp))
         output = OutputLayer(n=1)(generator)
         generator = Model(self.s, inp, output)
-        gan_model = GANModel.build_gan_model(generator, branch)
+        gan_model = GANModel(generator, branch)
+        res = gan_model.models['generator'].print_summary()
+        print(res)
+        res = gan_model.models['discriminator'].print_summary()
+        print(res)
+
+    def test_build_gan_model_1(self):
+
+        if self.server_dir is None:
+            unittest.TestCase.skipTest(self, "DLPY_DATA_DIR_SERVER is not set in the environment variables")
+
+        discriminator = Sequential(self.s)
+        discriminator.add(InputLayer(1, 28, 28))
+        discriminator.add(Conv2d(3, 3))
+        discriminator.add(Pooling(2))
+        discriminator.add(Conv2d(3, 3))
+        discriminator.add(Pooling(2))
+        discriminator.add(Dense(16))
+        discriminator.add(OutputLayer(n=1))
+
+        generator = Sequential(self.s)
+        generator.add(InputLayer(1, 28, 28))
+        generator.add(Conv2d(3, 3))
+        generator.add(Pooling(2))
+        generator.add(Conv2d(3, 3))
+        generator.add(Pooling(2))
+        generator.add(Dense(16))
+        generator.add(Dense(28 * 28))
+        generator.add(OutputLayer(n=1))
+
+        gan_model = GANModel(generator, discriminator)
+
         res = gan_model.models['generator'].print_summary()
         print(res)
         res = gan_model.models['discriminator'].print_summary()

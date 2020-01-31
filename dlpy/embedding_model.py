@@ -260,7 +260,7 @@ class EmbeddingModel(Model):
             Specifies the number of threads to use. If nothing is set then
             all of the cores available in the machine(s) will be used.
         train_from_scratch : bool, optional
-            When set to True, it ignores the existing weights and trains the model from the scracth.
+            When set to True, it ignores the existing weights and trains the model from the scratch.
 
         Returns
         --------
