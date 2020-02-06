@@ -30,6 +30,7 @@ import swat.utils.testing as tm
 from dlpy.applications import ResNet18_Caffe, DLPyError, Model, Sequential
 from dlpy.gan_model import GANModel
 from dlpy.layers import Conv2D, Input, OutputLayer, InputLayer, Conv2d, Pooling, Dense
+from dlpy.lr_scheduler import StepLR
 
 
 class TestGANModel(unittest.TestCase):
@@ -127,7 +128,7 @@ class TestGANModel(unittest.TestCase):
         generator.add(Conv2d(3, 3))
         generator.add(Pooling(2))
         generator.add(Dense(16))
-        generator.add(Dense(28 * 28))
+        generator.add(Dense(28 * 28, act='tanh'))
         generator.add(OutputLayer(n=1))
 
         gan_model = GANModel(generator, discriminator)
@@ -135,4 +136,51 @@ class TestGANModel(unittest.TestCase):
         res = gan_model.models['generator'].print_summary()
         print(res)
         res = gan_model.models['discriminator'].print_summary()
+        print(res)
+
+        from dlpy.model import Optimizer, MomentumSolver, AdamSolver
+        solver = AdamSolver(lr_scheduler=StepLR(learning_rate=0.0001, step_size=4), clip_grad_max=100,
+                            clip_grad_min=-100)
+        optimizer = Optimizer(algorithm=solver, mini_batch_size=8, log_level=2, max_epochs=8, reg_l2=0.0001)
+
+        res = gan_model.fit(optimizer, '', optimizer, self.server_dir+'mnist_validate',
+                            n_samples=32, max_iter=2, n_threads=1)
+        print(res)
+
+    def test_build_gan_model_2(self):
+
+        if self.server_dir is None:
+            unittest.TestCase.skipTest(self, "DLPY_DATA_DIR_SERVER is not set in the environment variables")
+
+        discriminator = Sequential(self.s)
+        discriminator.add(InputLayer(1, 28, 28))
+        discriminator.add(Conv2d(3, 3))
+        discriminator.add(Pooling(2))
+        discriminator.add(Conv2d(3, 3))
+        discriminator.add(Pooling(2))
+        discriminator.add(Dense(16))
+        discriminator.add(OutputLayer(n=1))
+
+        generator = Sequential(self.s)
+        generator.add(InputLayer(100, 1, 1))
+        generator.add(Dense(256, act='relu'))
+        generator.add(Dense(512, act='relu'))
+        generator.add(Dense(1024, act='relu'))
+        generator.add(Dense(28 * 28, act='tanh'))
+        generator.add(OutputLayer(act='softmax', n=2))
+
+        gan_model = GANModel(generator, discriminator)
+
+        res = gan_model.models['generator'].print_summary()
+        print(res)
+        res = gan_model.models['discriminator'].print_summary()
+        print(res)
+
+        from dlpy.model import Optimizer, MomentumSolver, AdamSolver
+        solver = AdamSolver(lr_scheduler=StepLR(learning_rate=0.0001, step_size=4), clip_grad_max=100,
+                            clip_grad_min=-100)
+        optimizer = Optimizer(algorithm=solver, mini_batch_size=8, log_level=2, max_epochs=4, reg_l2=0.0001)
+
+        res = gan_model.fit(optimizer, '', optimizer, self.server_dir+'mnist_validate',
+                            n_samples=32, max_iter=2, n_threads=1)
         print(res)

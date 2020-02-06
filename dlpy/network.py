@@ -376,35 +376,35 @@ class Network(Layer):
             elif layer_type == 13:
                 model.layers.append(extract_keypoints_layer(layer_table=layer_table))
             elif layer_type == 14:
-                model.layers.append(extract_reshape_layer(layer_table = layer_table))
+                model.layers.append(extract_reshape_layer(layer_table=layer_table))
             elif layer_type == 15:
-                model.layers.append(extract_fcmp_layer(layer_table = layer_table))
+                model.layers.append(extract_fcmp_layer(layer_table=layer_table))
             elif layer_type == 16:
                 model.layers.append(extract_conv2dtranspose_layer(layer_table=layer_table))
             elif layer_type == 17:
                 model.layers.append(extract_groupconv_layer(layer_table=layer_table))
             elif layer_type == 18:
-                model.layers.append(extract_channelshuffle_layer(layer_table = layer_table))
+                model.layers.append(extract_channelshuffle_layer(layer_table=layer_table))
             elif layer_type == 19:
-                model.layers.append(extract_segmentation_layer(layer_table = layer_table))
+                model.layers.append(extract_segmentation_layer(layer_table=layer_table))
             elif layer_type == 22:
-                model.layers.append(extract_embeddingloss_layer(layer_table = layer_table))
+                model.layers.append(extract_embeddingloss_layer(layer_table=layer_table))
             elif layer_type == 23:
                 model.layers.append(extract_rpn_layer(layer_table=layer_table))
             elif layer_type == 24:
                 model.layers.append(extract_roipooling_layer(layer_table=layer_table))
             elif layer_type == 25:
-                model.layers.append(extract_fastrcnn_layer(layer_table = layer_table))
+                model.layers.append(extract_fastrcnn_layer(layer_table=layer_table))
             elif layer_type == 26:
-                model.layers.append(extract_cluster_layer(layer_table = layer_table))
+                model.layers.append(extract_cluster_layer(layer_table=layer_table))
             elif layer_type == 27:
-                model.layers.append(extract_survival_layer(layer_table = layer_table))
+                model.layers.append(extract_survival_layer(layer_table=layer_table))
             elif layer_type == 28:
                 model.layers.append(extract_layernorm_layer(layer_table=layer_table))
             elif layer_type == 29:
-                model.layers.append(extract_mhattention_layer(layer_table = layer_table))
+                model.layers.append(extract_mhattention_layer(layer_table=layer_table))
             elif layer_type == 33:
-                model.layers.append(extract_split_layer(layer_table = layer_table))
+                model.layers.append(extract_split_layer(layer_table=layer_table))
             else:
                 raise DLPyError("Extracting Layer type, {}, is not"
                                 " supported yet.".format(UNSUPPORTED_EXTRACT_LAYER[layer_type]))
@@ -765,7 +765,7 @@ class Network(Layer):
     def _repr_svg_(self):
         return self.plot_network()._repr_svg_()
 
-    def set_weights(self, weight_tbl):
+    def set_weights(self, weight_tbl, quiet=False):
         '''
         Assign weights to the Model object
 
@@ -773,6 +773,9 @@ class Network(Layer):
         ----------
         weight_tbl : CASTable or string or dict or WeightsTable
             Specifies the weights CAS table for the model
+        quiet: bool
+            Specifies whether return warning messages. When it is True, all warning messages are suppressed.
+            Default: False
 
         '''
         weight_name = self.model_name + '_weights'
@@ -782,7 +785,7 @@ class Network(Layer):
             model_mapper = self.create_layer_id_name_mapping()
             # check if need to remap
             if weight_tbl.weights_mapping != model_mapper:
-                weight_tbl.remap_layer_ids(model_mapper, weight_name)
+                weight_tbl.remap_layer_ids(model_mapper, weight_name, quiet)
             weight_tbl = dict(name=weight_name)
             if weight_tbl['name'].lower() != weight_name.lower():
                 self.conn.altertable(name='weight_name.lower()', rename=weight_name)
@@ -866,35 +869,35 @@ class Network(Layer):
                 elif layer_type == 13:
                     self.layers.append(extract_keypoints_layer(layer_table=layer_table))
                 elif layer_type == 14:
-                    self.layers.append(extract_reshape_layer(layer_table = layer_table))
+                    self.layers.append(extract_reshape_layer(layer_table=layer_table))
                 elif layer_type == 15:
-                    self.layers.append(extract_fcmp_layer(layer_table = layer_table))
+                    self.layers.append(extract_fcmp_layer(layer_table=layer_table))
                 elif layer_type == 16:
                     self.layers.append(extract_conv2dtranspose_layer(layer_table=layer_table))
                 elif layer_type == 17:
                     self.layers.append(extract_groupconv_layer(layer_table=layer_table))
                 elif layer_type == 18:
-                    self.layers.append(extract_channelshuffle_layer(layer_table = layer_table))
+                    self.layers.append(extract_channelshuffle_layer(layer_table=layer_table))
                 elif layer_type == 19:
-                    self.layers.append(extract_segmentation_layer(layer_table = layer_table))
+                    self.layers.append(extract_segmentation_layer(layer_table=layer_table))
                 elif layer_type == 22:
-                    self.layers.append(extract_embeddingloss_layer(layer_table = layer_table))
+                    self.layers.append(extract_embeddingloss_layer(layer_table=layer_table))
                 elif layer_type == 23:
                     self.layers.append(extract_rpn_layer(layer_table=layer_table))
                 elif layer_type == 24:
                     self.layers.append(extract_roipooling_layer(layer_table=layer_table))
                 elif layer_type == 25:
-                    self.layers.append(extract_fastrcnn_layer(layer_table = layer_table))
+                    self.layers.append(extract_fastrcnn_layer(layer_table=layer_table))
                 elif layer_type == 26:
-                    self.layers.append(extract_cluster_layer(layer_table = layer_table))
+                    self.layers.append(extract_cluster_layer(layer_table=layer_table))
                 elif layer_type == 27:
-                    self.layers.append(extract_survival_layer(layer_table = layer_table))
+                    self.layers.append(extract_survival_layer(layer_table=layer_table))
                 elif layer_type == 28:
                     self.layers.append(extract_layernorm_layer(layer_table=layer_table))
                 elif layer_type == 29:
-                    self.layers.append(extract_mhattention_layer(layer_table = layer_table))
+                    self.layers.append(extract_mhattention_layer(layer_table=layer_table))
                 elif layer_type == 33:
-                    self.layers.append(extract_split_layer(layer_table = layer_table))
+                    self.layers.append(extract_split_layer(layer_table=layer_table))
                 else:
                     raise DLPyError("Extracting Layer type, {}, is not"
                                     " supported yet.".format(UNSUPPORTED_EXTRACT_LAYER[layer_type]))
@@ -1817,7 +1820,7 @@ class WeightsTable:
         layer_ids = m_frame['_DLLayerID_'].values
         return dict(zip(layer_names, layer_ids))
 
-    def remap_layer_ids(self, mapper, casout):
+    def remap_layer_ids(self, mapper, casout, quiet=False):
         '''
         Remap and generate a new weights table given specified mapper.
 
@@ -1835,25 +1838,36 @@ class WeightsTable:
                  5.0: 'convo.2_3'}
         casout : string
             Specifies the name of the new weights table.
+        quiet: bool
+            Specifies whether return warning messages. When it is True, all warning messages are suppressed.
+            Default: False
 
         '''
+        temp_casout = None
         if self.conn.tableexists(casout).exists:
-            print('WARNING: The table, {}, has already existed. It will be deleted and recreated.'.format(casout))
-            self.conn.droptable(casout)
+            # create a temp table to hold the weights not from mapper
+            temp_casout = random_name('temp_weights')
 
         tmp_col = random_name('TMPCOL')
         tmp_tbl = random_name('TMPTBL')  # each layer
         tmp_res_tbl = random_name('TMPRESTBL')  # final results
         orig_weights_tbl = self.weights_tbl_name
         if orig_weights_tbl == casout:
-            print('WARNING: casout is the same as original weights table name, the original one will be overwritten.')
+            if not quiet:
+                print(
+                    'WARNING: casout is the same as original weights table name, the original one will be overwritten.')
         old_mapper = self.weights_mapping
+        weight_where_clause = ''
         for new_layer_id, layer_name in mapper.items():
             orig_weights_cas_tbl = self.conn.CASTable(orig_weights_tbl)
             try:
                 old_layer_id = old_mapper[layer_name]
             except KeyError as k:
-                print("WARNING: The layer, {}, is not found in {}.".format(k.args[0], self.model_tbl_name))
+
+                weight_where_clause += '_layerid_ = ' + str(new_layer_id) + ' or '
+
+                if not quiet:
+                    print("WARNING: The layer, {}, is not found in {}.".format(k.args[0], self.model_tbl_name))
                 continue
             orig_weights_cas_tbl.append_where('_LayerID_ eq {}'.format(old_layer_id))
             orig_weights_cas_tbl.append_computedvarsprogram('{} = {}'.format(tmp_col, new_layer_id))
@@ -1867,12 +1881,32 @@ class WeightsTable:
                 self.conn.partition(table=input_table_check(orig_weights_cas_tbl),
                                     casout=dict(name=tmp_res_tbl, replace=True))
 
+        if temp_casout:
+            weight_where_clause = weight_where_clause[:-4]
+            self.conn.partition(table=dict(name=casout, where=weight_where_clause),
+                                casout=dict(name=temp_casout, replace=True))
+
+        # now we can drop casout
+        if self.conn.tableexists(casout).exists:
+            self.conn.droptable(casout, quiet=quiet)
+
         self.conn.altertable(name=tmp_res_tbl, rename=casout, drop='_LayerID_')
         self.conn.altertable(name=casout, columns=[dict(name=tmp_col, rename='_LayerID_')],
                              columnOrder=['_LayerID_', '_WeightID_', '_Weight_'])
+
         with sw.option_context(print_messages=False):
-            self.conn.droptable(tmp_tbl)
-            self.conn.droptable(tmp_res_tbl)
+            self.conn.droptable(tmp_tbl, quiet=quiet)
+            self.conn.droptable(tmp_res_tbl, quiet=quiet)
+
+        # append temp_casout when it is not None
+        if temp_casout:
+            res = self.conn.retrieve('deepLearn.dlJoin', _messagelevel='error',
+                                     casout=dict(name=casout, replace=True),
+                                     joinType='append',
+                                     left=casout,
+                                     right=temp_casout
+                                     )
+            self.conn.droptable(temp_casout, quiet=quiet)
 
 
 def layer_to_node(layer):
@@ -3092,4 +3126,3 @@ def extract_split_layer(layer_table):
 
     layer = Split(**split_layer_config)
     return layer
-

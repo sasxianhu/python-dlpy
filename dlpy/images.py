@@ -159,6 +159,13 @@ class ImageTable(CASTable):
                 code.append(('_filename_0=cats({},"_",put(put(shuffle_id,z10.)'
                              ',$char10.),".jpg");').format(label_col))
 
+        # create a new id var
+        # cannot guarantee they are unique
+        if '_id_' not in tbl.columninfo().ColumnInfo.Column.tolist():
+            n_obs = tbl.numrows().numrows
+            computedvars.append('_id_')
+            code.append('call streaminit(__rankid*1000+__threadid);_id_=floor(rand("UNIFORM")*{});'.format(n_obs))
+
         if image_col != '_image_':
             cls.running_image_column = image_col
 
