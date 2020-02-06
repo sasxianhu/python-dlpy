@@ -26,7 +26,7 @@ from copy import deepcopy
 from swat import CASTable
 
 from dlpy import Model
-from dlpy.layers import Input, OutputLayer, Keypoints, Reshape
+from dlpy.layers import Input, OutputLayer, Keypoints, Reshape, Segmentation
 from .model import DataSpec
 from .network import WeightsTable
 from dlpy.utils import DLPyError, random_name, caslibify_context
@@ -37,13 +37,14 @@ class GANModel:
     input_layer_name_discriminator = 'InputLayer_Discriminator'
     input_layer_name_generator = 'InputLayer_Generator'
     output_layer_name = 'output_regression_layer'
+    segmentation_layer_name = 'output_segmentation_layer'
 
     generated_tensor_layer_name = 'GAN_generation_layer'
     data_specs = None
     models = {}
     conn = None
 
-    def __init__(self, generator, discriminator,
+    def __init__(self, generator, discriminator, encoder=None,
                  output_width=None, output_height=None, output_depth=None):
         '''
 
@@ -55,6 +56,8 @@ class GANModel:
             Specifies the base model for generator.
         discriminator : Model
             Specifies the base model for discriminator.
+        encoder : Model
+            Specifies the base model for encoder to encode the generated images back to the latent space.
         output_width : int, optional
             Specifies the output tensor width from generator.
             When it is not given, the input width from discriminator will be used.
@@ -92,12 +95,26 @@ class GANModel:
         else:
             discriminator_tensor = deepcopy(discriminator)
 
+        if encoder:
+            if not hasattr(encoder, 'output_layers'):
+                print("NOTE: Convert the encoder model into a functional model.")
+                encoder_tensor = encoder.to_functional_model()
+            else:
+                encoder_tensor = deepcopy(encoder)
+            encoder_tensor.number_of_instances = 0
+        else:
+            encoder_tensor = None
+
         # add layer name prefix
         for layer in discriminator_tensor.layers:
             layer.name = 'discriminator_' + layer.name
 
         for layer in generator_tensor.layers:
             layer.name = 'generator_' + layer.name
+
+        if encoder_tensor:
+            for layer in encoder_tensor.layers:
+                layer.name = 'encoder_' + layer.name
 
         generator_tensor.number_of_instances = 0
         discriminator_tensor.number_of_instances = 0
@@ -112,6 +129,18 @@ class GANModel:
             generator_tensor.output_layers[0] = generator_tensor.layers[-1]
         elif generator_tensor.output_layers[0].can_be_last_layer:
             raise DLPyError('The generator model cannot contain task layer except output or keypoints layer.')
+
+        # check the output layer for encoder
+        if encoder_tensor:
+            if len(encoder_tensor.output_layers) != 1:
+                raise DLPyError('The encoder model cannot contain more than one output layer')
+            elif encoder_tensor.output_layers[0].type == OutputLayer.type or \
+                    encoder_tensor.output_layers[0].type == Keypoints.type:
+                print("NOTE: Remove the task layers from the encoder model.")
+                encoder_tensor.layers.remove(encoder_tensor.output_layers[0])
+                encoder_tensor.output_layers[0] = encoder_tensor.layers[-1]
+            elif encoder_tensor.output_layers[0].can_be_last_layer:
+                raise DLPyError('The encoder model cannot contain task layer except output or keypoints layer.')
 
         # check the output layer for discriminator
         # note discriminator could have more task layers
@@ -170,12 +199,21 @@ class GANModel:
         temp_branch = generator_tensor(temp_input_layer)  # return a list of tensors
         # add reshape layer for image generation
         # tanh generates pixels from -1 to 1
-        temp_branch = Reshape(name=self.generated_tensor_layer_name, act='IDENTITY',
+        temp_reshape_branch = Reshape(name=self.generated_tensor_layer_name, act='IDENTITY',
                               width=output_width, height=output_height, depth=output_depth)(temp_branch)
-        temp_branch = discriminator_tensor_for_generator(temp_branch)
+        temp_branch = discriminator_tensor_for_generator(temp_reshape_branch)
+
+        # add encoder part
+        if encoder_tensor:
+            auto_encoder_branch = encoder_tensor(temp_reshape_branch)
+            auto_encoder_branch = Segmentation(name=self.segmentation_layer_name)(auto_encoder_branch)
+
         # add the regression output layer that output a number between 0 and 1
         temp_output = OutputLayer(n=1, act='sigmoid', error='normal', name=self.output_layer_name)(temp_branch)
-        generator_model = Model(generator.conn, temp_input_layer, temp_output)
+        if encoder_tensor:
+            generator_model = Model(generator.conn, temp_input_layer, [temp_output, auto_encoder_branch])
+        else:
+            generator_model = Model(generator.conn, temp_input_layer, temp_output)
         generator_model.compile()
 
         self.models['generator'] = generator_model
@@ -188,6 +226,8 @@ class GANModel:
                     self.__freeze_layer_list = [layer.name]
                 else:
                     self.__freeze_layer_list.append(layer.name)
+
+        self.__freeze_layer_list.append(self.output_layer_name)
 
         # init some attrs
         self.current_data_iter = -1
@@ -220,6 +260,10 @@ class GANModel:
         self.discriminator_data_specs = [
             DataSpec(type_='IMAGE', layer=self.input_layer_name_discriminator, data=['_image_']),
             DataSpec(type_='NUMNOM', layer=self.output_layer_name, data=['_target_'])]
+
+        if encoder_tensor:
+            self.generator_data_specs.append(DataSpec(type_='NUMNOM', layer=self.segmentation_layer_name,
+                                                      data_layer=self.input_layer_name_generator))
 
     def __del__(self):
         if self.generator_data_cas_table is not None:
