@@ -98,7 +98,7 @@ class TestGANModel(unittest.TestCase):
 
         # change the output size for generator
         inp = Input(**branch.layers[0].config)
-        generator = Conv2D(width=1, height=1, n_filters=224*224*3)(branch(inp))
+        generator = Conv2D(width=1, height=1, n_filters=224 * 224 * 3)(branch(inp))
         output = OutputLayer(n=1)(generator)
         generator = Model(self.s, inp, output)
         gan_model = GANModel(generator, branch)
@@ -143,7 +143,7 @@ class TestGANModel(unittest.TestCase):
                             clip_grad_min=-100)
         optimizer = Optimizer(algorithm=solver, mini_batch_size=8, log_level=2, max_epochs=8, reg_l2=0.0001)
 
-        res = gan_model.fit(optimizer, '', optimizer, self.server_dir+'mnist_validate',
+        res = gan_model.fit(optimizer, optimizer, self.server_dir + 'mnist_validate',
                             n_samples=32, max_iter=2, n_threads=1)
         print(res)
 
@@ -181,8 +181,8 @@ class TestGANModel(unittest.TestCase):
                             clip_grad_min=-100)
         optimizer = Optimizer(algorithm=solver, mini_batch_size=8, log_level=2, max_epochs=4, reg_l2=0.0001)
 
-        res = gan_model.fit(optimizer, '', optimizer, self.server_dir+'mnist_validate',
-                            n_samples=32, max_iter=2, n_threads=1)
+        res = gan_model.fit(optimizer, optimizer, self.server_dir + 'mnist_validate',
+                            n_samples_generator=32, n_samples_discriminator=32, max_iter=2, n_threads=1)
         print(res)
 
     def test_build_gan_model_3(self):
@@ -225,9 +225,9 @@ class TestGANModel(unittest.TestCase):
 
         from dlpy.model import Optimizer, MomentumSolver, AdamSolver
         solver = AdamSolver(lr_scheduler=StepLR(learning_rate=0.0001, step_size=4), clip_grad_max=100,
-                             clip_grad_min=-100)
+                            clip_grad_min=-100)
         optimizer = Optimizer(algorithm=solver, mini_batch_size=8, log_level=2, max_epochs=4, reg_l2=0.0001)
 
-        res = gan_model.fit(optimizer, '', optimizer, self.server_dir+'mnist_validate',
-                             n_samples=32, max_iter=2, n_threads=1)
+        res = gan_model.fit(optimizer, '', optimizer, self.server_dir + 'mnist_validate',
+                            n_samples_generator=32, n_samples_discriminator=32, max_iter=2, n_threads=1)
         print(res)

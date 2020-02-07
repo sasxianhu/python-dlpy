@@ -200,7 +200,7 @@ class GANModel:
         # add reshape layer for image generation
         # tanh generates pixels from -1 to 1
         temp_reshape_branch = Reshape(name=self.generated_tensor_layer_name, act='IDENTITY',
-                              width=output_width, height=output_height, depth=output_depth)(temp_branch)
+                                      width=output_width, height=output_height, depth=output_depth)(temp_branch)
         temp_branch = discriminator_tensor_for_generator(temp_reshape_branch)
 
         # add encoder part
@@ -246,7 +246,7 @@ class GANModel:
         self.generator_input_depth = self.models['generator'].layers[0].config['n_channels']
         self.generator_input_width = self.models['generator'].layers[0].config['width']
         self.generator_input_height = self.models['generator'].layers[0].config['height']
-        self.generator_input_size = self.generator_input_depth*self.generator_input_width*self.generator_input_height
+        self.generator_input_size = self.generator_input_depth * self.generator_input_width * self.generator_input_height
 
         # data_specs
         gen_vars = []
@@ -273,14 +273,15 @@ class GANModel:
         if self.real_image_casout is not None:
             self.real_image_casout.droptable(quiet=True)
 
-    def fit(self, optimizer_generator, path_generator,
+    def fit(self, optimizer_generator,
             optimizer_discriminator, path_discriminator,
-            n_samples=512,
+            n_samples_generator=512,
+            n_samples_discriminator=256,
             resize_width=None, resize_height=None,
             max_iter=1,
             gpu=None, seed=0, record_seed=0,
             save_best_weights=False, n_threads=None,
-            train_from_scratch=None):
+            train_from_scratch=None, path_generator=None):
 
         """
         Fitting a deep learning model for GAN.
@@ -290,12 +291,6 @@ class GANModel:
 
         optimizer_generator : :class:`Optimizer`
             Specifies the parameters for the optimizer for the generator model.
-        path_generator : string
-            The path to the image directory on the server that contains the real images for generator.
-            When the string is empty, the data for generator will be generated automatically.
-            Path may be absolute, or relative to the current caslib root.
-            A new sample of data will be randomly generated after the number of epochs defined in Optimizer.
-            max_iter defines how many iterations the random sample will be generated.
         optimizer_discriminator : :class:`Optimizer`
             Specifies the parameters for the optimizer for the discriminator model.
         path_discriminator : string
@@ -303,9 +298,18 @@ class GANModel:
             Path may be absolute, or relative to the current caslib root.
             A new sample of data will be randomly generated after the number of epochs defined in Optimizer.
             max_iter defines how many iterations the random sample will be generated.
-        n_samples : int, optional
-            Number of samples to generate.
+        path_generator : string
+            The path to the image directory on the server that contains the real images for generator.
+            When the string is empty, the data for generator will be generated automatically.
+            Path may be absolute, or relative to the current caslib root.
+            A new sample of data will be randomly generated after the number of epochs defined in Optimizer.
+            max_iter defines how many iterations the random sample will be generated.
+        n_samples_generator: int, optional
+            Number of samples for generator.
             Default: 512
+        n_samples_discriminator: int, optional
+            Number of samples for discriminator.
+            Default: 256
         resize_width : int, optional
             Specifies the image width that needs be resized to. When resize_width is not given, it will be reset to
             the specified resize_height.
@@ -366,7 +370,7 @@ class GANModel:
             # optimize generator first. If discriminator has weights, use them. And freeze all discriminator weights
             res_t = self.optimize_generator(self, optimizer=optimizer_generator,
                                             path=path_generator,
-                                            n_samples=n_samples,
+                                            n_samples=n_samples_generator,
                                             gpu=gpu, seed=seed, record_seed=record_seed,
                                             save_best_weights=save_best_weights, n_threads=n_threads,
                                             train_from_scratch=train_from_scratch)
@@ -379,7 +383,7 @@ class GANModel:
 
             res_t = self.optimize_discriminator(self, optimizer=optimizer_discriminator,
                                                 path=path_discriminator,
-                                                n_samples=n_samples,
+                                                n_samples=n_samples_discriminator,
                                                 resize_width=resize_width, resize_height=resize_height,
                                                 gpu=gpu, seed=seed, record_seed=record_seed,
                                                 save_best_weights=save_best_weights, n_threads=n_threads,
@@ -572,8 +576,9 @@ class GANModel:
             self.generator_data_cas_table.droptable(quiet=True)
             self.generator_data_cas_table = None
 
+        time_start = time.time()
         self.generator_data_cas_table = self.generate_random_images(self.conn, n_samples,
-                                                                    random()*100 +
+                                                                    random() * 100 +
                                                                     self.current_data_iter,
                                                                     self.generator_input_width,
                                                                     self.generator_input_height,
@@ -595,6 +600,15 @@ class GANModel:
             train_from_scratch_real = train_from_scratch
         else:
             train_from_scratch_real = False
+
+        # do not optimize generator at the first iteration since discriminator has no weights yet.
+        if (self.current_data_iter == 0 and self.conn.tableExists(model_discriminator.model_weights).exists == 0) or \
+                train_from_scratch_real:
+            optimizer_t.__setitem__('max_epochs', 1)
+            optimizer_t.algorithm.__setitem__('learningrate', 0.0)
+
+        print("NOTE: time for generating samples and loading weights to train generator: {} (s)".
+              format(time.time() - time_start))
 
         res = model.fit(self.generator_data_cas_table, inputs=None, target=None,
                         data_specs=self.generator_data_specs,
@@ -624,6 +638,7 @@ class GANModel:
             self.real_image_casout.droptable(quiet=True)
             self.real_image_casout = None
 
+        time_start = time.time()
         self.real_image_casout = self.load_real_images(self, path, caslib=None, n_samples=n_real_images,
                                                        label_level=None,
                                                        resize_width=resize_width, resize_height=resize_height)
@@ -661,6 +676,11 @@ class GANModel:
                                  left=self.real_image_casout,
                                  right=self.fake_image_casout
                                  )
+        # shuffle this table
+        res = self.conn.retrieve('table.shuffle', _messagelevel='error',
+                                 table=self.discriminator_data_cas_table,
+                                 casout=dict(replace=True, blocksize=32, **self.discriminator_data_cas_table))
+
         self.discriminator_data_cas_table = CASTable(self.discriminator_data_cas_table['name'])
         self.discriminator_data_cas_table.set_connection((self.conn))
 
@@ -669,6 +689,9 @@ class GANModel:
             train_from_scratch_real = train_from_scratch
         else:
             train_from_scratch_real = False
+
+        print("NOTE: time for generating samples and loading images to train discriminator: {} (s)".
+              format(time.time() - time_start))
 
         res = model.fit(self.discriminator_data_cas_table, inputs=None, target=None,
                         data_specs=self.discriminator_data_specs,
