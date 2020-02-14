@@ -144,7 +144,7 @@ class TestGANModel(unittest.TestCase):
         optimizer = Optimizer(algorithm=solver, mini_batch_size=8, log_level=2, max_epochs=8, reg_l2=0.0001)
 
         res = gan_model.fit(optimizer, optimizer, self.server_dir + 'mnist_validate',
-                            n_samples=32, max_iter=2, n_threads=1)
+                            n_samples_generator=32, n_samples_discriminator=16, max_iter=2, n_threads=1)
         print(res)
 
     def test_build_gan_model_2(self):
@@ -228,6 +228,55 @@ class TestGANModel(unittest.TestCase):
                             clip_grad_min=-100)
         optimizer = Optimizer(algorithm=solver, mini_batch_size=8, log_level=2, max_epochs=4, reg_l2=0.0001)
 
-        res = gan_model.fit(optimizer, '', optimizer, self.server_dir + 'mnist_validate',
+        res = gan_model.fit(optimizer, optimizer, self.server_dir + 'mnist_validate',
                             n_samples_generator=32, n_samples_discriminator=32, max_iter=2, n_threads=1)
+        print(res)
+
+    # test damping_factor
+    def test_build_gan_model_4(self):
+
+        if self.server_dir is None:
+            unittest.TestCase.skipTest(self, "DLPY_DATA_DIR_SERVER is not set in the environment variables")
+
+        discriminator = Sequential(self.s)
+        discriminator.add(InputLayer(1, 28, 28))
+        discriminator.add(Conv2d(3, 3))
+        discriminator.add(Pooling(2))
+        discriminator.add(Conv2d(3, 3))
+        discriminator.add(Pooling(2))
+        discriminator.add(Dense(16))
+        discriminator.add(OutputLayer(n=1))
+
+        generator = Sequential(self.s)
+        generator.add(InputLayer(1, 100, 1))
+        generator.add(Dense(256, act='relu'))
+        generator.add(Dense(512, act='relu'))
+        generator.add(Dense(1024, act='relu'))
+        generator.add(Dense(28 * 28, act='tanh'))
+        generator.add(OutputLayer(act='softmax', n=2))
+
+        encoder = Sequential(self.s)
+        encoder.add(InputLayer(100, 1, 1))
+        encoder.add(Dense(256, act='relu'))
+        encoder.add(Dense(512, act='relu'))
+        encoder.add(Dense(1024, act='relu'))
+        encoder.add(Dense(100, act='tanh'))
+        encoder.add(OutputLayer(act='softmax', n=2))
+
+        gan_model = GANModel(generator, discriminator, encoder)
+
+        res = gan_model.models['generator'].print_summary()
+        print(res)
+
+        res = gan_model.models['discriminator'].print_summary()
+        print(res)
+
+        from dlpy.model import Optimizer, MomentumSolver, AdamSolver
+        solver = AdamSolver(lr_scheduler=StepLR(learning_rate=0.0001, step_size=4), clip_grad_max=100,
+                            clip_grad_min=-100)
+        optimizer = Optimizer(algorithm=solver, mini_batch_size=8, log_level=2, max_epochs=4, reg_l2=0.0001)
+
+        res = gan_model.fit(optimizer, optimizer, self.server_dir + 'mnist_validate',
+                            n_samples_generator=32, n_samples_discriminator=32, max_iter=2, n_threads=1,
+                            damping_factor=0.5)
         print(res)

@@ -33,6 +33,109 @@ from dlpy.utils import DLPyError, random_name, caslibify_context
 import time
 
 
+def mix_weights_with_fedsql(conn, model_weights, model_old_weights, damping_factor):
+    if damping_factor is None or damping_factor == 0.0:
+        return model_weights
+
+    conn.loadactionset('fedsql', _messagelevel='error')
+
+    # save the tbl attr
+    res = conn.retrieve('table.attribute', _messagelevel='error',
+                        task='CONVERT',
+                        name=model_weights.name,
+                        attrtable=model_weights.name + '_attr')
+
+    tbl1 = model_weights.name
+    tbl2 = model_old_weights['name']
+    query_join = 'select {}._layerid_, {}._weightid_, {}._weight_, {}._weight_ \
+                           from {} left outer join  {} \
+                           on {}._layerid_ = {}._layerid_ and {}._weightid_ = {}._weightid_'. \
+        format(tbl1, tbl1, tbl1, tbl2, tbl1, tbl2, tbl1, tbl2, tbl1, tbl2)
+    res = conn.retrieve('fedsql.execDirect', _messagelevel='error',
+                        query=query_join,
+                        casout=dict(name=model_weights.name, replace=True))
+
+    res = conn.retrieve('table.alterTable', _messagelevel='error',
+                        name=model_weights.name,
+                        columns=[dict(name='_weight_', rename='_weight1_')])
+
+    scale1 = 1 - damping_factor
+    scale2 = damping_factor
+    comp_weight = 'if missing(_Weight__2) then do; _weight_=_weight1_; ' \
+                  'end; else do; _weight_=_weight1_*{}+_Weight__2*{};end;'.format(scale1, scale2)
+
+    res = conn.retrieve('table.partition', _messagelevel='error',
+                        table=dict(computedVars=['_Weight_'],
+                                   computedvarsprogram=comp_weight,
+                                   vars=['_layerid_', '_weightid_', '_weight_'],
+                                   name=model_weights.name),
+                        casout=dict(replace=True, name=model_weights.name))
+
+    # attach the tbl attr
+    res = conn.retrieve('table.attribute', _messagelevel='error',
+                        task='ADD',
+                        name=model_weights.name,
+                        attrtable=model_weights.name + '_attr')
+
+    return model_weights
+
+
+def mix_weights(conn, model_weights, model_old_weights, damping_factor):
+    if damping_factor is None or damping_factor == 0.0:
+        return model_weights
+
+    # save the tbl attr
+    res = conn.retrieve('table.attribute', _messagelevel='error',
+                        task='CONVERT',
+                        name=model_weights.name,
+                        attrtable=model_weights.name + '_attr')
+
+    res = conn.retrieve('table.alterTable', _messagelevel='error',
+                        name=model_weights.name,
+                        columns=[dict(name='_weight_', rename='_weight1_')])
+
+    res = conn.retrieve('table.alterTable', _messagelevel='error',
+                        name=model_old_weights['name'],
+                        columns=[dict(name='_weight_', rename='_weight0_')])
+
+    keypgm = "length key $26; length k0 $12; length k1 $12; \
+              k0=putn(_layerid_,'best12.');\
+              k1=putn(_weightid_,'best12.');\
+              key=catx('_', k0, k1);"
+
+    res = conn.retrieve('deepLearn.dlJoin', _messagelevel='error',
+                        casout=dict(name=model_weights.name, replace=True),
+                        id='key',
+                        left=dict(name=model_weights.name,
+                                  computedvars='key',
+                                  computedvarsprogram=keypgm),
+                        right=dict(name=model_old_weights['name'],
+                                   computedvars='key',
+                                   computedvarsprogram=keypgm,
+                                   vars=['_weight0_'])
+                        )
+
+    scale1 = 1 - damping_factor
+    scale2 = damping_factor
+    comp_weight = 'if missing(_weight0_) then do; _weight_=_weight1_; ' \
+                  'end; else do; _weight_=_weight1_*{}+_weight0_*{};end;'.format(scale1, scale2)
+
+    res = conn.retrieve('table.partition', _messagelevel='error',
+                        table=dict(computedVars=['_Weight_'],
+                                   computedvarsprogram=comp_weight,
+                                   vars=['_layerid_', '_weightid_', '_weight_'],
+                                   name=model_weights.name),
+                        casout=dict(replace=True, name=model_weights.name))
+
+    # attach the tbl attr
+    res = conn.retrieve('table.attribute', _messagelevel='error',
+                        task='ADD',
+                        name=model_weights.name,
+                        attrtable=model_weights.name + '_attr')
+
+    return model_weights
+
+
 class GANModel:
     input_layer_name_discriminator = 'InputLayer_Discriminator'
     input_layer_name_generator = 'InputLayer_Generator'
@@ -226,6 +329,8 @@ class GANModel:
                     self.__freeze_layer_list = [layer.name]
                 else:
                     self.__freeze_layer_list.append(layer.name)
+            elif layer.name == self.generated_tensor_layer_name:
+                self.generated_tensor_layer_id = layer.layer_id
 
         self.__freeze_layer_list.append(self.output_layer_name)
 
@@ -281,7 +386,8 @@ class GANModel:
             max_iter=1,
             gpu=None, seed=0, record_seed=0,
             save_best_weights=False, n_threads=None,
-            train_from_scratch=None, path_generator=None):
+            train_from_scratch=None, path_generator=None,
+            damping_factor=None):
 
         """
         Fitting a deep learning model for GAN.
@@ -344,6 +450,9 @@ class GANModel:
             all of the cores available in the machine(s) will be used.
         train_from_scratch : bool, optional
             When set to True, it ignores the existing weights and trains the model from the scratch.
+        damping_factor : double, optional
+            Specifies the ratio to mix the new weights with the previous weights.
+            Default: None
 
         Returns
         --------
@@ -354,8 +463,6 @@ class GANModel:
         self.conn.loadactionset('datastep', _messagelevel='error')
 
         # check options
-
-        # TODO: Init stage? we might need warm up the weights
 
         res = {'generator': [], 'discriminator': []}
         time_start = time.time()
@@ -373,7 +480,8 @@ class GANModel:
                                             n_samples=n_samples_generator,
                                             gpu=gpu, seed=seed, record_seed=record_seed,
                                             save_best_weights=save_best_weights, n_threads=n_threads,
-                                            train_from_scratch=train_from_scratch)
+                                            train_from_scratch=train_from_scratch,
+                                            damping_factor=damping_factor)
             res['generator'].append(res_t)
 
             # optimize discriminator. load the data from path, append the data from generator.
@@ -560,6 +668,7 @@ class GANModel:
         for i in range(0, width * height * depth):
             code_str += 'x_' + str(i) + '=rand("UNIFORM")*2-1;'
         code_str += '_target_=1; output; end; drop i; run;'
+        # code_str += '_target_=rand("UNIFORM")*0.1+0.9; output; end; drop i; run;'
         conn.retrieve('datastep.runcode', _messagelevel='error', single='Yes', code=code_str)
         temp_table = CASTable(name)
         temp_table.set_connection(conn)
@@ -567,9 +676,11 @@ class GANModel:
 
     @staticmethod
     def optimize_generator(self, optimizer, path, n_samples, gpu, seed, record_seed, save_best_weights, n_threads,
-                           train_from_scratch):
+                           train_from_scratch, damping_factor):
 
         model = self.models['generator']
+
+        temp_old_weights = None
 
         # generate random data
         if self.generator_data_cas_table is not None:
@@ -600,6 +711,14 @@ class GANModel:
             train_from_scratch_real = train_from_scratch
         else:
             train_from_scratch_real = False
+            # store the old weights
+            if damping_factor is not None and model.model_weights:
+                temp_old_weights = dict(name=random_name())
+                res = self.conn.retrieve('table.partition', _messagelevel='error',
+                                         casout=temp_old_weights,
+                                         table=dict(name=model.model_weights.name,
+                                                    where='_layerid_ < {}'.format(self.generated_tensor_layer_id))
+                                         )
 
         # do not optimize generator at the first iteration since discriminator has no weights yet.
         if (self.current_data_iter == 0 and self.conn.tableExists(model_discriminator.model_weights).exists == 0) or \
@@ -610,6 +729,11 @@ class GANModel:
         print("NOTE: time for generating samples and loading weights to train generator: {} (s)".
               format(time.time() - time_start))
 
+        # freeze all bn stats
+        # if self.current_data_iter > 1:
+        #     optimizer_t.__setitem__('freeze_batch_norm_stats', True)
+        #     print("NOTE: all BN layers are frozen.")
+
         res = model.fit(self.generator_data_cas_table, inputs=None, target=None,
                         data_specs=self.generator_data_specs,
                         optimizer=optimizer_t,
@@ -618,6 +742,16 @@ class GANModel:
                         force_equal_padding=True,
                         save_best_weights=save_best_weights, n_threads=n_threads,
                         target_order=None, train_from_scratch=train_from_scratch_real)
+
+        # mix the weights
+        # new weights = weights * damping_factor + old_weights*(1-damping_factor)
+        if temp_old_weights:
+            time_start = time.time()
+            model.model_weights = mix_weights_with_fedsql(self.conn, model.model_weights, temp_old_weights, damping_factor)
+            self.conn.retrieve('table.dropTable', _messagelevel='error',
+                               table=temp_old_weights['name'])
+            print("NOTE: time for mixing weights: {} (s)".
+                  format(time.time() - time_start))
 
         return res
 
