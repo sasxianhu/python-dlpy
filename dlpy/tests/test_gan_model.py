@@ -229,7 +229,7 @@ class TestGANModel(unittest.TestCase):
         optimizer = Optimizer(algorithm=solver, mini_batch_size=8, log_level=2, max_epochs=4, reg_l2=0.0001)
 
         res = gan_model.fit(optimizer, optimizer, self.server_dir + 'mnist_validate',
-                            n_samples_generator=32, n_samples_discriminator=32, max_iter=2, n_threads=1)
+                            n_samples_generator=32, n_samples_discriminator=32, max_iter=3, n_threads=1)
         print(res)
 
     # test damping_factor

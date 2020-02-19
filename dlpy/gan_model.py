@@ -324,6 +324,8 @@ class GANModel:
         # build the freeze layer list for the generator model
         self.__freeze_layer_list = None
         for layer in generator_model.layers:
+            # if layer.type == 'batchnorm':  # do not freeze bn layers
+            #    continue
             if layer.name.find('discriminator_') == 0:
                 if self.__freeze_layer_list is None:
                     self.__freeze_layer_list = [layer.name]
@@ -662,14 +664,21 @@ class GANModel:
 
     @staticmethod
     def generate_random_images(conn, n_obs, seed, width, height, depth):
+        print('NOTE: seed for generating images = {}'.format(int(seed)))
         name = random_name()
-        code_str = 'data ' + name + '; call streaminit(' + str(seed) + '); '
+        code_str = 'data ' + name + '; call streaminit(' + str(int(seed)) + '); '
         code_str += 'do i=1 to ' + str(n_obs) + ';'
         for i in range(0, width * height * depth):
             code_str += 'x_' + str(i) + '=rand("UNIFORM")*2-1;'
         code_str += '_target_=1; output; end; drop i; run;'
         # code_str += '_target_=rand("UNIFORM")*0.1+0.9; output; end; drop i; run;'
         conn.retrieve('datastep.runcode', _messagelevel='error', single='Yes', code=code_str)
+
+        # shuffle data
+        res = conn.retrieve('table.shuffle', _messagelevel='error',
+                            table=name,
+                            casout=dict(replace=True, blocksize=16, name=name))
+
         temp_table = CASTable(name)
         temp_table.set_connection(conn)
         return temp_table
@@ -689,7 +698,7 @@ class GANModel:
 
         time_start = time.time()
         self.generator_data_cas_table = self.generate_random_images(self.conn, n_samples,
-                                                                    random() * 100 +
+                                                                    random() * 1000 +
                                                                     self.current_data_iter,
                                                                     self.generator_input_width,
                                                                     self.generator_input_height,
@@ -706,6 +715,7 @@ class GANModel:
         # fit but freeze discriminator weights
         optimizer_t = deepcopy(optimizer)
         optimizer_t.__setitem__('freeze_layers', self.__freeze_layer_list)
+        print("NOTE: freeze these layers: {}".format(self.__freeze_layer_list))
 
         if self.current_data_iter == 0:
             train_from_scratch_real = train_from_scratch
@@ -732,7 +742,7 @@ class GANModel:
         # freeze all bn stats
         # if self.current_data_iter > 1:
         #     optimizer_t.__setitem__('freeze_batch_norm_stats', True)
-        #     print("NOTE: all BN layers are frozen.")
+        #     print("NOTE: BN stats for all BN layers are frozen.")
 
         res = model.fit(self.generator_data_cas_table, inputs=None, target=None,
                         data_specs=self.generator_data_specs,
@@ -747,7 +757,8 @@ class GANModel:
         # new weights = weights * damping_factor + old_weights*(1-damping_factor)
         if temp_old_weights:
             time_start = time.time()
-            model.model_weights = mix_weights_with_fedsql(self.conn, model.model_weights, temp_old_weights, damping_factor)
+            model.model_weights = mix_weights_with_fedsql(self.conn, model.model_weights, temp_old_weights,
+                                                          damping_factor)
             self.conn.retrieve('table.dropTable', _messagelevel='error',
                                table=temp_old_weights['name'])
             print("NOTE: time for mixing weights: {} (s)".
@@ -780,7 +791,8 @@ class GANModel:
         # generate fake images using generator
 
         n_fake_images = n_samples - n_real_images
-        self.predict(n_samples=n_fake_images, seed=seed, gpu=gpu, buffer_size=None, use_best_weights=None,
+        self.predict(n_samples=n_fake_images, seed=self.current_data_iter + random() * 1000,
+                     gpu=gpu, buffer_size=None, use_best_weights=None,
                      n_threads=n_threads, layer_image_type='jpg', log_level=None)
 
         # append the table to generate the final training data
@@ -816,7 +828,7 @@ class GANModel:
                                  casout=dict(replace=True, blocksize=32, **self.discriminator_data_cas_table))
 
         self.discriminator_data_cas_table = CASTable(self.discriminator_data_cas_table['name'])
-        self.discriminator_data_cas_table.set_connection((self.conn))
+        self.discriminator_data_cas_table.set_connection(self.conn)
 
         # fit. if discriminator has the weights, load them
         if self.current_data_iter == 0:
