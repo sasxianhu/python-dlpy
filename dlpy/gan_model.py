@@ -16,7 +16,13 @@
 #  limitations under the License.
 #
 
-''' The GAN Model class adds training, evaluation, feature analysis routines for Generative Adversarial Network '''
+'''
+
+The GAN Model class adds training, evaluation, feature analysis routines for Generative Adversarial Network
+NOTE THAT this set of GAN APIs is experimental only.
+
+'''
+
 import os
 from random import random
 
