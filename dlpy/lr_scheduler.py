@@ -292,10 +292,15 @@ class CyclicLR(FCMPLR):
     https://arxiv.org/pdf/1506.01186.pdf
 
     """
-    def __init__(self, conn, data, batch_size, factor, learning_rate, max_lr):
+    def __init__(self, conn, data, batch_size, factor, learning_rate, max_lr, num_rows):
         super(CyclicLR, self).__init__(conn, learning_rate=learning_rate,
                                        fcmp_learning_rate='cyclic_lr')
-        num_batch_per_epoch = math.ceil(conn.numrows(data).numrows / batch_size)
+        # use user-defined number of observations when data or conn is not available
+        if data is None or conn is None:
+            num_batch_per_epoch = math.ceil(num_rows / batch_size)
+        else:
+            num_batch_per_epoch = math.ceil(conn.numrows(data).numrows / batch_size)
+
         step_size = int(num_batch_per_epoch * factor)
         conn.addRoutines(
             routineCode='''

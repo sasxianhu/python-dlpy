@@ -154,7 +154,8 @@ class GANModel:
     conn = None
 
     def __init__(self, generator, discriminator, encoder=None,
-                 output_width=None, output_height=None, output_depth=None):
+                 output_width=None, output_height=None, output_depth=None,
+                 z_scale_range=1.0):
         '''
 
         Build an Generative Adversarial Network model based on a given generator and discriminator model branches
@@ -354,6 +355,9 @@ class GANModel:
         self.image_file_list = None
         self.real_image_casout = None
         self.fake_image_casout = None
+
+        # in default scale the input for generator to (-1, 1)
+        self.z_scale_range = z_scale_range
 
         # get the input image size
         self.generator_input_depth = self.models['generator'].layers[0].config['n_channels']
@@ -586,7 +590,8 @@ class GANModel:
         self.generator_data_cas_table = self.generate_random_images(self.conn, n_samples, seed,
                                                                     self.generator_input_width,
                                                                     self.generator_input_height,
-                                                                    self.generator_input_depth)
+                                                                    self.generator_input_depth,
+                                                                    self.z_scale_range)
         generator_model = self.models['generator']
         layer_out_temp = dict(name=random_name())
         res_pred = generator_model.predict(data=self.generator_data_cas_table, layer_out=layer_out_temp['name'],
@@ -669,13 +674,13 @@ class GANModel:
         pass
 
     @staticmethod
-    def generate_random_images(conn, n_obs, seed, width, height, depth):
+    def generate_random_images(conn, n_obs, seed, width, height, depth, z_scale):
         print('NOTE: seed for generating images = {}'.format(int(seed)))
         name = random_name()
         code_str = 'data ' + name + '; call streaminit(' + str(int(seed)) + '); '
         code_str += 'do i=1 to ' + str(n_obs) + ';'
         for i in range(0, width * height * depth):
-            code_str += 'x_' + str(i) + '=rand("UNIFORM")*2-1;'
+            code_str += 'x_' + str(i) + '=(rand("UNIFORM")*2-1)*{};'.format(z_scale)
         code_str += '_target_=1; output; end; drop i; run;'
         # code_str += '_target_=rand("UNIFORM")*0.1+0.9; output; end; drop i; run;'
         conn.retrieve('datastep.runcode', _messagelevel='error', single='Yes', code=code_str)
@@ -708,7 +713,8 @@ class GANModel:
                                                                     self.current_data_iter,
                                                                     self.generator_input_width,
                                                                     self.generator_input_height,
-                                                                    self.generator_input_depth)
+                                                                    self.generator_input_depth,
+                                                                    self.z_scale_range)
         # if discriminator has the weights, load them
         model_discriminator = self.models['discriminator']
 
